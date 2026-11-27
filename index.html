@@ -1075,10 +1075,35 @@
       try {
         const snap = await db.collection('trainReports').get();
         const rows = [];
+        const legacyMigrations = [];
         snap.forEach(function(doc) {
-          rows.push(Object.assign({ id: doc.id }, doc.data() || {}));
+          const data = doc.data() || {};
+          rows.push(Object.assign({ id: doc.id }, data));
+          if (data.sightingMethod || data.sightingOther || data.sightingLocation) {
+            legacyMigrations.push(Promise.all([
+              db.collection('reportAudit').doc(doc.id).set({
+                sightingMethod: data.sightingMethod || '',
+                sightingOther: data.sightingOther || '',
+                sightingLocation: data.sightingLocation || '',
+                reportedByUid: data.reportedByUid || null,
+                agency: data.agency || '',
+                vehicleId: data.vehicleId || '',
+                trainNumber: data.trainNumber || '',
+                serviceDate: data.serviceDate || '',
+                updatedAt: firebase.firestore.FieldValue.serverTimestamp()
+              }, { merge: true }),
+              doc.ref.update({
+                sightingMethod: firebase.firestore.FieldValue.delete(),
+                sightingOther: firebase.firestore.FieldValue.delete(),
+                sightingLocation: firebase.firestore.FieldValue.delete()
+              })
+            ]).catch(function(err) {
+              console.warn('[admin] legacy sighting privacy migration failed for ' + doc.id, err);
+            }));
+          }
         });
-        // Merge admin-only reporter PII from reportAudit (same doc ids)
+        if (legacyMigrations.length) await Promise.all(legacyMigrations);
+        // Merge admin-only reporter identity and sighting details from reportAudit (same doc ids)
         try {
           const auditSnap = await db.collection('reportAudit').get();
           const auditById = {};
@@ -1093,6 +1118,9 @@
             if (a.reportedByName) r.reportedByName = a.reportedByName;
             if (a.reportedByUid && !r.reportedByUid) r.reportedByUid = a.reportedByUid;
             if (a.reportedByLabel && !r.reportedByLabel) r.reportedByLabel = a.reportedByLabel;
+            r.sightingMethod = a.sightingMethod || '';
+            r.sightingOther = a.sightingOther || '';
+            r.sightingLocation = a.sightingLocation || '';
             if (Array.isArray(a.contributors) && a.contributors.length) r._auditContributors = a.contributors;
           });
         } catch (auditErr) {
@@ -1121,7 +1149,7 @@
         if (!q) return true;
         const blob = [
           r.reportedByEmail, r.reportedByLabel, r.reportedByName, r.reportedByUid,
-          r.vehicleId, r.trainNumber, r.agency, r.unitName, r.comment, r.id
+          r.vehicleId, r.trainNumber, r.agency, r.unitName, r.comment, r.sightingMethod, r.sightingOther, r.sightingLocation, r.id
         ].map(function(x) { return String(x || '').toLowerCase(); }).join(' ');
         return blob.indexOf(q) !== -1;
       });
@@ -1147,7 +1175,7 @@
           '<td>' + escapeHtmlLite(formatAdminWhen(r.updatedAt || r.createdAt)) + '</td>' +
           '<td>' + escapeHtmlLite(r.agency || '') + '</td>' +
           '<td>' + escapeHtmlLite(vehicle) + '</td>' +
-          '<td>' + escapeHtmlLite(formatTrainReportLocoLabelAdmin(r)) + (r.comment ? '<div class="meta">' + escapeHtmlLite(String(r.comment).slice(0, 140)) + '</div>' : '') + '</td>' +
+          '<td>' + escapeHtmlLite(formatTrainReportLocoLabelAdmin(r)) + (r.comment ? '<div class="meta">' + escapeHtmlLite(String(r.comment).slice(0, 140)) + '</div>' : '') + ((r.sightingMethod || r.sightingLocation || r.sightingOther) ? '<div class="meta"><strong>Sighting:</strong> ' + escapeHtmlLite(({ in_person: 'In person', webcam: 'Webcam', other: 'Other' }[r.sightingMethod] || r.sightingMethod || '—')) + (r.sightingOther ? ' — ' + escapeHtmlLite(r.sightingOther) : '') + (r.sightingLocation ? ' · ' + escapeHtmlLite(r.sightingLocation) : '') + '</div>' : '') + '</td>' +
           '<td>' + reporter + '</td>' +
           '<td><code style="font-size:11px;">' + escapeHtmlLite(r.id) + '</code></td>' +
           '<td>' + delBtn + '</td>' +
@@ -2306,7 +2334,7 @@
           '<td>' + escapeHtmlLite(r.agency || '') + '</td>' +
           '<td>' + escapeHtmlLite(vehicle) + '</td>' +
           '<td>' + escapeHtmlLite(formatTrainReportLocoLabelAdmin(r)) + '</td>' +
-          '<td>' + escapeHtmlLite(note || '—') + '</td>' +
+          '<td>' + escapeHtmlLite(note || '—') + ((r.sightingMethod || r.sightingLocation || r.sightingOther) ? '<div class="meta"><strong>Sighting:</strong> ' + escapeHtmlLite(({ in_person: 'In person', webcam: 'Webcam', other: 'Other' }[r.sightingMethod] || r.sightingMethod || '—')) + (r.sightingOther ? ' — ' + escapeHtmlLite(r.sightingOther) : '') + (r.sightingLocation ? ' · ' + escapeHtmlLite(r.sightingLocation) : '') + '</div>' : '') + '</td>' +
           '<td>' + escapeHtmlLite(r.reportedByLabel || r.reportedByEmail || r.reportedByUid || '—') + '</td>' +
           '<td style="white-space:nowrap;">' +
             '<button type="button" class="rr-btn" data-admin-pending-approve="' + escapeHtmlLite(r.id) + '" style="padding:6px 8px;font-size:11px;margin:2px;">Approve</button>' +
@@ -2325,6 +2353,14 @@
         delete data.id;
         delete data.status;
         delete data.submittedAt;
+        const privateSighting = {
+          sightingMethod: data.sightingMethod || '',
+          sightingOther: data.sightingOther || '',
+          sightingLocation: data.sightingLocation || ''
+        };
+        delete data.sightingMethod;
+        delete data.sightingOther;
+        delete data.sightingLocation;
         data.approvedAt = firebase.firestore.FieldValue.serverTimestamp();
         data.approvedByUid = ((currentUser || {}).uid) || null;
         await db.collection('trainReports').doc(docId).set(data, { merge: true });
@@ -2333,6 +2369,9 @@
             reportedByUid: data.reportedByUid || null,
             reportedByEmail: data.reportedByEmail || null,
             reportedByName: data.reportedByName || null,
+            sightingMethod: privateSighting.sightingMethod,
+            sightingOther: privateSighting.sightingOther,
+            sightingLocation: privateSighting.sightingLocation,
             approvedByUid: ((currentUser || {}).uid) || null,
             updatedAt: firebase.firestore.FieldValue.serverTimestamp()
           }, { merge: true });
