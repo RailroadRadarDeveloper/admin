@@ -2334,7 +2334,7 @@
           '<td>' + escapeHtmlLite(r.agency || '') + '</td>' +
           '<td>' + escapeHtmlLite(vehicle) + '</td>' +
           '<td>' + escapeHtmlLite(formatTrainReportLocoLabelAdmin(r)) + '</td>' +
-          '<td>' + escapeHtmlLite(note || '—') + '</td>' +
+          '<td>' + escapeHtmlLite(note || '—') + ((r.sightingMethod || r.sightingLocation || r.sightingOther) ? '<div class="meta"><strong>Sighting:</strong> ' + escapeHtmlLite(({ in_person: 'In person', webcam: 'Webcam', other: 'Other' }[r.sightingMethod] || r.sightingMethod || '—')) + (r.sightingOther ? ' — ' + escapeHtmlLite(r.sightingOther) : '') + (r.sightingLocation ? ' · ' + escapeHtmlLite(r.sightingLocation) : '') + '</div>' : '') + '</td>' +
           '<td>' + escapeHtmlLite(r.reportedByLabel || r.reportedByEmail || r.reportedByUid || '—') + '</td>' +
           '<td style="white-space:nowrap;">' +
             '<button type="button" class="rr-btn" data-admin-pending-approve="' + escapeHtmlLite(r.id) + '" style="padding:6px 8px;font-size:11px;margin:2px;">Approve</button>' +
